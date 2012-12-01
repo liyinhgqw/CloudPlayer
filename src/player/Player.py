@@ -10,20 +10,7 @@ import sys
 import threading
 from random import shuffle
 
-class Song(object):
-  '''
-  Metadata of a song
-  '''
-  def __init__(self, path=None):
-    self.meta = {'path':path,
-                 'title':'',
-                 'artist':'',
-                 'album':'',
-                 'bitrate':'', 'minimum-bitrate':'', 'maximum-bitrate':'',
-                 'container-format':'',
-                 'has-crc':False,
-                 'channel-mode':'',
-                 'audio-codec':''}
+from player.Song import Song
 
 class PlayList(object):
   '''
@@ -31,11 +18,12 @@ class PlayList(object):
   '''
   MUSIC_PATTERN = ["*.mp3", ]
     
-  def __init__(self, lib=None):
+  def __init__(self, liblist=None):
     self.list = []
     self._lock = threading.Lock()
-    if lib:
-      self.load(lib)
+    if liblist:
+      for lib in liblist:
+        self.load(lib)
   
   @staticmethod
   def locate(patterns, root):
@@ -44,15 +32,16 @@ class PlayList(object):
       dirs = dirs
       for filehandle in [os.path.abspath(os.path.join(path, filename)) for filename in files]:
         yield filehandle
-            
+           
   # lib: physical dir
   # should only be called when initialize
   def load(self, lib):
     with self._lock:
-      self.list = []
       load_list = [filehandle for filehandle in PlayList.locate(self.MUSIC_PATTERN, lib)]
       for song_path in load_list:
-        self.list.append(Song(song_path))
+        song = Song(song_path)
+        if song.parseMeta():
+          self.list.append(song)
     self.shuffle()  
       
   def add(self, song):
@@ -95,10 +84,10 @@ class Player(object):
     pause = 1
     stop = 2
 
-  def __init__(self, lib=None):
+  def __init__(self, liblist=None):
     self.__createPipeline()
     self.__tagged = False
-    self.playList = PlayList(lib)
+    self.playList = PlayList(liblist)
     if self.playList.size() > 0:
       self.nextSong()
   
@@ -115,12 +104,12 @@ class Player(object):
     if t == gst.MESSAGE_ERROR:
       print "error ..."
     elif t == gst.MESSAGE_TAG:
-      taglist = message.parse_tag()
-      for key in taglist.keys():
-        try:
-          self.cur_song.meta[key] = taglist[key]
-        except:
-          return False
+#      taglist = message.parse_tag()
+#      for key in taglist.keys():
+#        try:
+#          self.cur_song.meta[key] = taglist[key]
+#        except:
+#          return False
       if not self.__tagged:
         self.__tagged = True
         print 'title', self.cur_song.meta['title']
@@ -143,7 +132,7 @@ class Player(object):
       self.__pipeline.set_state(gst.STATE_PLAYING)
       self.state = self.State.playing
     elif song:
-      self.cur_song = Song(os.path.abspath(song.meta['path']))
+      self.cur_song = song
       self.__pipeline.set_property('uri', self.__uri(song.meta['path']))
       self.__pipeline.set_state(gst.STATE_PLAYING)
       self.state = self.State.playing
@@ -177,6 +166,9 @@ class SimplePlayer(Player):
       
 
 if __name__ == '__main__':
-  player = Player(sys.argv[1])
+  liblist = []
+  for i in range(1, len(sys.argv)):
+    liblist.append(sys.argv[i])
+  player = Player(liblist)
   gtk.main()
         
