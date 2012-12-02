@@ -42,26 +42,32 @@ class PlayList(object):
         song = Song(song_path)
         if song.parseMeta():
           self.list.append(song)
-    self.shuffle()  
+    self.shuffle()
       
+  def append(self, song):
+    with self._lock:
+      self.list.append(song)      
   def add(self, song):
     with self._lock:
       self.list.append(song)
+      self.shuffle()
   def delete(self, song):
     with self._lock:
       self.list.remove(song)
+      self.shuffle()
   def addList(self, song_list):
     for song in song_list:
       self.add(song)
+    self.shuffle()
   def delList(self, song_list):
     for song in song_list:
       self.delete(song)
+    self.shuffle()
   def size(self):
     return len(self.list)
   def shuffle(self):
-    with self._lock:
-      self.indices = range(0, self.size())
-      shuffle(self.indices)
+    self.indices = range(0, self.size())
+    shuffle(self.indices)
   def pop(self):
     with self._lock:
       if self.size() == 0:
@@ -88,40 +94,54 @@ class Player(object):
     self.__createPipeline()
     self.__tagged = False
     self.playList = PlayList(liblist)
+    print self.playList.list
     if self.playList.size() > 0:
       self.nextSong()
   
-  def __createPipeline(self):
+  def __createPipeline(self, fake=False):
     self.__pipeline = gst.element_factory_make("playbin2", "player")
+    if fake:
+      fakesink = gst.element_factory_make("fakesink", "fakesink")
+      self.__pipeline.set_property("video-sink", fakesink)
+      self.__pipeline.set_property("audio-sink", fakesink)
     bus = self.__pipeline.get_bus()
     bus.add_signal_watch()
     bus.connect("message", self.__onMessage)
     
     self.state = self.State.stop
 
+  def __handleBad(self, song):
+    self.stop()
+    self.playList.delete(song)
+    self.nextSong()
   def __onMessage(self, bus, message):
     t = message.type
     if t == gst.MESSAGE_ERROR:
-      print "error ..."
+      print "error: %s" % (self.cur_song.meta['path'])
+      self.__handleBad(self.cur_song)
     elif t == gst.MESSAGE_TAG:
-#      taglist = message.parse_tag()
-#      for key in taglist.keys():
-#        try:
-#          self.cur_song.meta[key] = taglist[key]
-#        except:
-#          return False
+      taglist = message.parse_tag()
+      for key in taglist.keys():
+        try:
+          if not key in self.cur_song.meta:
+            self.cur_song.meta[key] = taglist[key]
+        except:
+          return False
       if not self.__tagged:
         self.__tagged = True
-        print 'title', self.cur_song.meta['title']
-        print 'artist', self.cur_song.meta['artist']
-        print 'album', self.cur_song.meta['album']
+        print 'title:', self.cur_song.meta['title']
+        print 'artist:', self.cur_song.meta['artist']
+        print 'album:', self.cur_song.meta['album']
     elif t == gst.MESSAGE_EOS:
       self.stop()
       self.nextSong()
   
   def nextSong(self):
     self.stop()
-    self.tagged = False
+    self.__tagged = False
+    if self.playList.size() == 0:
+      print 'Empty play list.'
+      exit(1)
     song = self.playList.pop()
     self.play(song)
           
@@ -133,7 +153,7 @@ class Player(object):
       self.state = self.State.playing
     elif song:
       self.cur_song = song
-      self.__pipeline.set_property('uri', self.__uri(song.meta['path']))
+      self.__pipeline.set_property('uri', self.uri(song.meta['path']))
       self.__pipeline.set_state(gst.STATE_PLAYING)
       self.state = self.State.playing
     
@@ -148,7 +168,7 @@ class Player(object):
     self.__pipeline.set_state(gst.STATE_NULL)
     self.state = self.State.stop
   
-  def __uri(self, _path):
+  def uri(self, _path):
     return 'file://' + os.path.abspath(_path)
   
 
@@ -170,5 +190,6 @@ if __name__ == '__main__':
   for i in range(1, len(sys.argv)):
     liblist.append(sys.argv[i])
   player = Player(liblist)
-  gtk.main()
+  while True:
+    gtk.main()
         
